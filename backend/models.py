@@ -1,7 +1,7 @@
 from sqlalchemy import Column, Integer, String, Text, Float, DateTime, ForeignKey, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
-from sqlalchemy.dialects.postgresql import UUID
+from pgvector.sqlalchemy import Vector
 from datetime import datetime
 import uuid
 
@@ -68,7 +68,5 @@ class AcademicSource(Base):
     abstract = Column(Text)
     full_text = Column(Text)
     source_type = Column(String)  # 'paper', 'textbook', 'course_material'
-    embedding = Column(Text)  # Will store vector as text, converted as needed
+    embedding = Column(Vector(1536))  # pgvector column
     created_at = Column(DateTime, default=datetime.utcnow)
-
-

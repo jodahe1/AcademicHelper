@@ -59,3 +59,4 @@ class SourceItem(BaseModel):
     authors: str
     publication_year: Optional[int] = None
     source_type: Optional[str] = None
+

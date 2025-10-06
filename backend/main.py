@@ -15,6 +15,7 @@ from schemas import (
 )
 from auth import hash_password, verify_password, create_access_token, get_current_student
 from utils import save_upload_file
+from rag_service import ingest_missing_embeddings, vector_search
 
 app = FastAPI(title="Academic Helper API")
 
@@ -110,12 +111,29 @@ def get_analysis(
 # -------- Sources (placeholder search) --------
 @app.get("/sources", response_model=list[SourceItem])
 def search_sources(q: str, limit: int = 5, db: Session = Depends(get_db)):
-    # Placeholder: simple title/author ilike search; RAG to be implemented in Phase 3
+    # Use vector similarity if embeddings exist; fallback to ILIKE
+    try:
+        results = vector_search(db, q, limit=limit)
+        if results:
+            return [
+                SourceItem(
+                    id=r.id,
+                    title=r.title,
+                    authors=r.authors,
+                    publication_year=r.publication_year,
+                    source_type=r.source_type,
+                )
+                for r in results
+            ]
+    except Exception:
+        # fall back to ILIKE when embedding model is unavailable or not configured
+        pass
+
     results = (
         db.query(AcademicSource)
         .filter(
-            (AcademicSource.title.ilike(f"%{q}%")) | (
-                AcademicSource.authors.ilike(f"%{q}%"))
+            (AcademicSource.title.ilike(f"%{q}%"))
+            | (AcademicSource.authors.ilike(f"%{q}%"))
         )
         .limit(limit)
         .all()
@@ -130,3 +148,9 @@ def search_sources(q: str, limit: int = 5, db: Session = Depends(get_db)):
         )
         for r in results
     ]
+
+
+@app.post("/sources/ingest")
+def ingest_sources_embeddings(db: Session = Depends(get_db)):
+    count = ingest_missing_embeddings(db)
+    return {"embedded": count}
