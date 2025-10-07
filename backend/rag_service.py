@@ -12,7 +12,8 @@ from models import AcademicSource
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-ada-002")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-GEMINI_EMBED_MODEL = os.getenv("GEMINI_EMBED_MODEL", "text-embedding-004")
+GEMINI_EMBED_MODEL = os.getenv(
+    "GEMINI_EMBED_MODEL", "models/text-embedding-004")
 TARGET_VECTOR_DIM = 1536
 
 
@@ -40,13 +41,36 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
         return []
     # Prefer Gemini if key provided; otherwise use OpenAI
     if GEMINI_API_KEY:
+        print(f"Using Gemini with model: {GEMINI_EMBED_MODEL}")
         client = get_gemini_client()
         embeddings = []
-        for t in texts:
-            r = client.embed_content(model=GEMINI_EMBED_MODEL, content=t)
-            vec = r["embedding"]["values"] if isinstance(
-                r, dict) else r.embedding.values
-            embeddings.append(_pad_or_trim(vec, TARGET_VECTOR_DIM))
+        for i, t in enumerate(texts):
+            try:
+                print(f"Embedding text {i+1}/{len(texts)}: {t[:50]}...")
+                r = client.embed_content(model=GEMINI_EMBED_MODEL, content=t)
+                print(f"Response type: {type(r)}")
+                print(
+                    f"Response keys: {r.keys() if hasattr(r, 'keys') else 'No keys'}")
+                # Try different response formats
+                if hasattr(r, 'embedding') and hasattr(r.embedding, 'values'):
+                    vec = r.embedding.values
+                elif isinstance(r, dict) and 'embedding' in r:
+                    # Handle direct embedding array format
+                    if isinstance(r['embedding'], list):
+                        vec = r['embedding']
+                    elif 'values' in r['embedding']:
+                        vec = r['embedding']['values']
+                    else:
+                        print(f"Unexpected embedding format: {r['embedding']}")
+                        raise ValueError(f"Unexpected embedding format: {type(r['embedding'])}")
+                else:
+                    print(f"Unexpected response format: {r}")
+                    raise ValueError(f"Unexpected response format: {type(r)}")
+                print(f"Vector length: {len(vec)}")
+                embeddings.append(_pad_or_trim(vec, TARGET_VECTOR_DIM))
+            except Exception as e:
+                print(f"Error embedding text {i+1}: {type(e).__name__}: {e}")
+                raise
         return embeddings
     else:
         client = get_openai_client()

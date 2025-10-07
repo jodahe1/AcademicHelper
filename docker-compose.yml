@@ -36,7 +36,7 @@ services:
       JWT_SECRET_KEY: your_jwt_secret_key_here_change_in_production
       # Prefer Gemini if provided via .env
       GEMINI_API_KEY: ${GEMINI_API_KEY}
-      GEMINI_EMBED_MODEL: ${GEMINI_EMBED_MODEL:-text-embedding-004}
+      GEMINI_EMBED_MODEL: ${GEMINI_EMBED_MODEL:-models/text-embedding-004}
       # Optional OpenAI fallback if explicitly provided
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     depends_on:
