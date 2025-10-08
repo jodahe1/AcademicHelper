@@ -1,0 +1,390 @@
+{
+  "name": "Assignment Analysis Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "assignment",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "9d1099c1-e90f-4ba7-91af-c1342cdd7a36",
+      "name": "Webhook",
+      "webhookId": "d6075d5d-76cc-4740-a09b-62a5eaca50f3"
+    },
+    {
+      "parameters": {
+        "url": "http://backend:8000/sources",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "machine learning educatio"
+            },
+            {
+              "name": "limit",
+              "value": "5"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        416,
+        0
+      ],
+      "id": "35c1202f-63ee-4374-b238-96e32682f21e",
+      "name": "RAG Source Search",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract text from uploaded file\nconst inputData = $input.first().json;\n\n// For now, we'll handle simple text extraction\n// In production, you'd add PDF/DOCX parsing libraries\nlet extractedText = '';\nlet wordCount = 0;\n\nif (inputData.filename && inputData.filename.endsWith('.txt')) {\n  // Simple text file - content should be in the request\n  extractedText = inputData.file_content || inputData.original_text || 'Sample assignment text for testing';\n} else {\n  // For PDF/DOCX files, we'll use placeholder text for now\n  extractedText = inputData.original_text || 'Sample assignment text about machine learning in education. This is a comprehensive study examining the impact of artificial intelligence on modern educational systems.';\n}\n\nwordCount = extractedText.split(' ').filter(word => word.length > 0).length;\n\n// Extract basic topic (first few sentences)\nconst sentences = extractedText.split('.').slice(0, 2).join('.');\n\nreturn {\n  json: {\n    assignment_id: inputData.assignment_id,\n    student_id: inputData.student_id,\n    filename: inputData.filename,\n    extracted_text: extractedText,\n    word_count: wordCount,\n    topic_preview: sentences,\n    processed_at: new Date().toISOString()\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "b83122b6-8579-459c-bbb8-1f1df61b5ccd",
+      "name": "Text Extraction"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-goog-api-key",
+              "value": "AIzaSyBFChP0depJ5yt9ywkzCE0bHiEem8IXOIQ"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": \"Analyze this assignment about machine learning in education. Provide a JSON response with: topic, academic_level, research_suggestions, citation_recommendations, confidence_score.\"\n    }]\n  }]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        832,
+        0
+      ],
+      "id": "1a597b93-ecf4-406e-97e0-6868bd788ad9",
+      "name": "AI Analysis"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Gemini API response\nconst aiResponse = $input.first().json;\n\nlet analysisResult = {};\n\ntry {\n  // Extract text from Gemini response\n  const responseText = aiResponse.candidates[0].content.parts[0].text;\n  \n  // Try to parse as JSON\n  analysisResult = JSON.parse(responseText);\n  \n} catch (error) {\n  // Fallback if JSON parsing fails\n  analysisResult = {\n    topic: \"Analysis parsing failed\",\n    academic_level: \"unknown\",\n    research_suggestions: \"Unable to generate suggestions\",\n    citation_recommendations: \"Use APA format\",\n    confidence_score: 0.1\n  };\n}\n\n// Get previous data\nconst textData = $('Text Extraction').first().json;\nconst ragData = $('RAG Source Search').first().json;\n\nreturn {\n  json: {\n    assignment_id: textData.assignment_id,\n    student_id: textData.student_id,\n    suggested_sources: ragData,\n    topic: analysisResult.topic,\n    academic_level: analysisResult.academic_level,\n    research_suggestions: analysisResult.research_suggestions,\n    citation_recommendations: analysisResult.citation_recommendations,\n    confidence_score: analysisResult.confidence_score,\n    word_count: textData.word_count,\n    analyzed_at: new Date().toISOString()\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        0
+      ],
+      "id": "703ecde1-78f3-4bdb-8e94-9a399115a955",
+      "name": "Parse AI Response"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get data from previous nodes using correct references\nconst parsedData = $input.first().json;  // Parse AI Response data\nconst textData = $('Text Extraction').first().json;  // Text Extraction data\nconst ragData = $('Fix RAG Output').first().json;  // RAG sources data\n\nconst assignmentText = textData.extracted_text.toLowerCase();\nlet maxSimilarity = 0;\nlet flaggedSections = [];\n\n// Check similarity with RAG sources\nif (Array.isArray(ragData)) {\n  ragData.forEach(source => {\n    const sourceText = (source.title + ' ' + (source.abstract || '')).toLowerCase();\n    const similarity = calculateSimilarity(assignmentText, sourceText);\n    \n    if (similarity > 0.2) { // 20% threshold\n      flaggedSections.push({\n        source_id: source.id,\n        source_title: source.title,\n        similarity_score: Math.round(similarity * 100) / 100\n      });\n      maxSimilarity = Math.max(maxSimilarity, similarity);\n    }\n  });\n}\n\nfunction calculateSimilarity(text1, text2) {\n  const words1 = text1.split(' ').filter(w => w.length > 3);\n  const words2 = text2.split(' ').filter(w => w.length > 3);\n  const intersection = words1.filter(word => words2.includes(word));\n  return intersection.length / Math.max(words1.length, words2.length, 1);\n}\n\n// Combine all data for final result\nreturn {\n  json: {\n    ...parsedData,  // Include all AI analysis data\n    plagiarism_score: Math.round(maxSimilarity * 100) / 100,\n    flagged_sections: flaggedSections,\n    total_sources_checked: ragData ? ragData.length : 0\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1248,
+        0
+      ],
+      "id": "f44dd521-075b-4cc3-8d54-8013b41a7965",
+      "name": "Plagiarism Detection"
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "analysis_results",
+          "mode": "list",
+          "cachedResultName": "analysis_results"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "assignment_id": "={{ $input.first().json.assignment_id }}",
+            "suggested_sources": "={{ $input.first().json.suggested_sources }}",
+            "plagiarism_score": "={{ $input.first().json.plagiarism_score }}",
+            "flagged_sections": "={{ $json.flagged_sections }}",
+            "research_suggestions": "={{ $input.first().json.research_suggestions }}",
+            "citation_recommendations": "={{ $input.first().json.citation_recommendations }}",
+            "confidence_score": "={{ $input.first().json.confidence_score }}",
+            "id": 0
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "assignment_id",
+              "displayName": "assignment_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "suggested_sources",
+              "displayName": "suggested_sources",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "object",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "plagiarism_score",
+              "displayName": "plagiarism_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "flagged_sections",
+              "displayName": "flagged_sections",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "object",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "research_suggestions",
+              "displayName": "research_suggestions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "citation_recommendations",
+              "displayName": "citation_recommendations",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "confidence_score",
+              "displayName": "confidence_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "analyzed_at",
+              "displayName": "analyzed_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1664,
+        0
+      ],
+      "id": "35252bed-1c57-46f2-be39-de50fb8d6b70",
+      "name": "Store Results",
+      "credentials": {
+        "postgres": {
+          "id": "6ubzmF1YcBuMozU2",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Debug the RAG response\nconst input = $input.first();\n\nconsole.log('Input type:', typeof input);\nconsole.log('Input keys:', Object.keys(input));\nconsole.log('Full input:', JSON.stringify(input, null, 2));\n\n// Try different ways to access the data\nlet ragData = null;\n\nif (input.json) {\n  ragData = input.json;\n  console.log('Found json property:', ragData);\n} else if (input.body) {\n  ragData = input.body;\n  console.log('Found body property:', ragData);\n} else if (Array.isArray(input)) {\n  ragData = input;\n  console.log('Input is array:', ragData);\n} else {\n  ragData = input;\n  console.log('Using input directly:', ragData);\n}\n\nreturn {\n  json: {\n    debug_info: {\n      input_type: typeof input,\n      input_keys: Object.keys(input),\n      rag_data: ragData\n    },\n    sources: ragData || []\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        0
+      ],
+      "id": "f30e44a8-26ca-4376-9f07-0f8a0bde9ef2",
+      "name": "Fix RAG Output"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "73f784fa-6541-4247-81d5-d873b0480af4",
+              "name": "flagged_sections",
+              "value": "={{ JSON.stringify({\"sections\": $json.flagged_sections}) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1456,
+        0
+      ],
+      "id": "69871ac2-3511-4992-b553-146aa3bfb24d",
+      "name": "Edit Fields"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Text Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Text Extraction": {
+      "main": [
+        [
+          {
+            "node": "RAG Source Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RAG Source Search": {
+      "main": [
+        [
+          {
+            "node": "Fix RAG Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Analysis": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Response": {
+      "main": [
+        [
+          {
+            "node": "Plagiarism Detection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plagiarism Detection": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fix RAG Output": {
+      "main": [
+        [
+          {
+            "node": "AI Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Store Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "420c0af6-08b0-4adf-8a5c-7772c7296571",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "1d71b981722d9a929d140198421e06c6f16be67bfa86395717f7f06668ac20eb"
+  },
+  "id": "TXZFzzJfTTC4JJ1v",
+  "tags": []
+}
